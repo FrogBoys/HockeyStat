@@ -1,55 +1,20 @@
+import os
 from tkinter import *
 import ttkbootstrap as ttk
 import tkinter as tk
 import matplotlib.pyplot as plt
 import numpy as np
-from PIL import Image
-from matplotlib.figure import Figure
+import time
 from matplotlib.colors import LinearSegmentedColormap
-from matplotlib.backends.backend_tkagg import (FigureCanvasTkAgg, NavigationToolbar2Tk)
+from matplotlib.backends.backend_tkagg import (FigureCanvasTkAgg)
 from matplotlib.ticker import StrMethodFormatter
-from matplotlib.cm import ScalarMappable
 import requests
 import json
 from tkinter.ttk import Progressbar
-import os
-import threading
+from threading import *
 
-
-cdict3 = {
-    'red': (
-        (0.0, 0.0, 0.0),
-        (0.25, 0.0, 0.0),
-        (0.5, 0.8, 1.0),
-        (0.75, 1.0, 1.0),
-        (1.0, 0.4, 1.0),
-    ),
-    'green': (
-        (0.0, 0.0, 0.0),
-        (0.25, 0.0, 0.0),
-        (0.5, 0.9, 0.9),
-        (0.75, 0.0, 0.0),
-        (1.0, 0.0, 0.0),
-    ),
-    'blue': (
-        (0.0, 0.0, 0.4),
-        (0.25, 1.0, 1.0),
-        (0.5, 1.0, 0.8),
-        (0.75, 0.0, 0.0),
-        (1.0, 0.0, 0.0),
-    )
-}
-
-cdict4 = {
-    **cdict3,
-    'alpha': (
-        (0.0, 1.0, 1.0),
-        # (0.25, 1.0, 1.0),
-        (0.5, 0.3, 0.3),
-        # (0.75, 1.0, 1.0),
-        (1.0, 1.0, 1.0),
-    ),
-}
+lock = Lock()  # Lock for shared resources.
+finished = False
 
 seasonGames = {
     'Regular season': 'R',
@@ -57,12 +22,169 @@ seasonGames = {
     'All Games': 'A'
 }
 
+class Threader(Thread):
+    def __init__(root, app) -> None:
+        super(Threader, root).__init__()
+        root.teams = app['teams']
+        root.hometeam = app['hometeam']
+        root.awayteams = app['awayteams']
+        root.awayteam = app['awayteam']
+        root.season = app['season']
+        root.rdbtngames = app['rdbtngames']
+        root.homeShoots = []
+        root.homeShootsX = []
+        root.homeShootsY = []
+        root.homeGoals = []
+        root.homeGoalsX = []
+        root.homeGoalsY = []
+        root.awayShoots = []
+        root.awayShootsX = []
+        root.awayShootsY = []
+        root.awayGoals = []
+        root.awayGoalsX = []
+        root.awayGoalsY = []
+        root.homeShotsC = [] 
+        root.homeGoalsC = []
+        root.awayShootsC = [] 
+        root.awayGoalsC = []
+        root.games = []
+        root.awayHits = 0
+        root.awayBlocks = 0
+        root.homeHits = 0
+        root.homeBlocks = 0
+        root.directory_path = os.path.dirname(__file__)
+
+        pass
+
+    def run(root):
+        global finished
+        homeTeamId = [i for i in root.teams if root.teams[i] == root.hometeam]
+        awayTeamId = [i for i in root.awayteams if root.awayteams[i] == root.awayteam]
+        root.getGames(str(homeTeamId[0]), str(awayTeamId[0]))
+        root.getData(homeTeamId[0], awayTeamId[0])
+        with lock:
+            # root.clearLists()
+            finished = True
+        pass
+
+    
+    
+    def setSeasonVal(self):
+        season = ''
+        if self.season == "2022-2023":
+            season = '20222023'
+        elif self.season == "2021-2022":
+            season = '20212022'
+        elif self.season == "2020-2021":
+            season = '20202021'
+        elif self.season == "2019-2020":  
+            season = '20192020'
+        else:
+            season = '20222023'
+        return season
+    
+    def getGames(self, homeTeamId, awayTeamId):
+        start = time.time()
+        season = self.setSeasonVal()
+        response = requests.get("https://statsapi.web.nhl.com/api/v1/schedule?season=" + season + "&teamId=" + homeTeamId)
+        type(response.text)
+        json_object = json.loads(response.text)
+        value = self.rdbtngames 
+        self.games = [x['games'][0] for x in json_object['dates'] if x['games'][0]['teams']['away']['team']['id'] == int(awayTeamId)
+                    or (x['games'][0]['teams']['away']['team']['id'] == int(homeTeamId)
+                    and x['games'][0]['teams']['home']['team']['id'] == int(awayTeamId)) 
+                    if (x['games'][0]['gameType'] == value or value == 'A')]
+        end = time.time()
+        print("The time of execution of getGames is :",
+            (end-start) * 10**3, "ms")
+        pass
+
+    def getData(self, homeId, awayId):
+        start = time.time()
+        for x in self.games:
+            response = requests.get("https://statsapi.web.nhl.com/api/v1/game/" + str(x['gamePk']) + "/feed/live")
+            type(response.text)
+            game = json.loads(response.text)
+            homeevents = [x for x in game['liveData']['plays']['allPlays'] if "team" in x 
+                      and x['team']['id'] == homeId
+                      and (x['result']['event'] == 'Shot' or x['result']['event'] == 'Goal' 
+                           or x['result']['event'] == 'Hit' or x['result']['event'] == 'Blocked Shot')]
+            awayevents = [x for x in game['liveData']['plays']['allPlays'] if "team" in x 
+                        and x['team']['id'] == awayId
+                        and (x['result']['event'] == 'Shot' or x['result']['event'] == 'Goal' 
+                           or x['result']['event'] == 'Hit' or x['result']['event'] == 'Blocked Shot')] 
+            for y in awayevents:
+                if y['result']['event'] == 'Shot':
+                    coord = y['coordinates']
+                    coord['x'] = abs(coord['x'])
+                    self.awayShoots.append(coord)
+                    self.awayShootsX.append(coord['x'])
+                    self.awayShootsY.append(coord['y'])
+                elif y['result']['event'] == 'Goal':
+                    coord = y['coordinates']
+                    coord['x'] = abs(coord['x'])
+                    self.awayGoals.append(coord)
+                    self.awayGoalsX.append(coord['x'])
+                    self.awayGoalsY.append(coord['y'])
+                elif y['result']['event'] == 'Hit':
+                    self.awayHits += 1
+                elif y['result']['event'] == 'Blocked Shot':
+                    self.awayBlocks += 1
+
+            for y in homeevents:
+                if y['result']['event'] == 'Shot':
+                    coord = y['coordinates']
+                    coord['x'] = -abs(coord['x'])
+                    self.homeShoots.append(coord)
+                    self.homeShootsX.append(coord['x'])
+                    self.homeShootsY.append(coord['y'])
+                elif y['result']['event'] == 'Goal':
+                    coord = y['coordinates']
+                    coord['x'] = -abs(coord['x'])
+                    self.homeGoals.append(coord)
+                    self.homeGoalsX.append(coord['x'])
+                    self.homeGoalsY.append(coord['y'])
+                elif y['result']['event'] == 'Hit':
+                    self.homeHits += 1
+                elif y['result']['event'] == 'Blocked Shot':
+                    self.homeBlocks += 1
+        end = time.time()
+        print("The time of execution of getData is :",
+        (end-start) * 10**3, "ms")
+        pass
+
+    def clearLists(self):
+        del self.awayGoals[:]
+        del self.awayGoalsX[:]
+        del self.awayGoalsY[:]
+
+        del self.homeGoals[:]
+        del self.homeGoalsX[:]
+        del self.homeGoalsY[:]
+
+        del self.awayShoots[:]
+        del self.awayShootsX[:]
+        del self.awayShootsY[:]
+
+        del self.homeShoots[:]
+        del self.homeShootsX[:]
+        del self.homeShootsY[:]
+
+        del self.games[:]
+        self.awayHits = 0
+        self.awayBlocks = 0
+        self.homeHits = 0
+        self.homeBlocks = 0
+
+        pass
+
+
 
 class App(tk.Tk):
     def __init__(self):
+        super().__init__()
         self.seasons = ['2022-2023', '2022-2023', '2021-2022', '2020-2021', '2019-2020']
         self.season = '2022-2023'
-        super().__init__()
         Frame(self)
         ttk.Style("yeti")
         self.directory_path = os.path.dirname(__file__)
@@ -75,19 +197,6 @@ class App(tk.Tk):
         self.awayoption_var = tk.StringVar(self)
         self.season_var = tk.StringVar(self)
 
-        self.homeShoots = []
-        self.homeShootsX = []
-        self.homeShootsY = []
-        self.homeGoals = []
-        self.homeGoalsX = []
-        self.homeGoalsY = []
-        self.awayShoots = []
-        self.awayShootsX = []
-        self.awayShootsY = []
-        self.awayGoals = []
-        self.awayGoalsX = []
-        self.awayGoalsY = []
-        self.games = []
 
         self.awayStatShots_label = ttk.Label(self,bootstyle="dark")
         self.awayStatGoals_label = ttk.Label(self,bootstyle="dark")
@@ -101,10 +210,8 @@ class App(tk.Tk):
         self.homeStatHits_label = ttk.Label(self,bootstyle="dark")
         self.hometeam_label = ttk.Label(self,bootstyle="dark")
         self.awayteam_label = ttk.Label(self,bootstyle="dark")
-        self.awayHits = 0
-        self.awayBlocks = 0
-        self.homeHits = 0
-        self.homeBlocks = 0
+
+        
         self.setupOptions()
         self.setupOptionsMenus()
         self.setupCheckBoxes()
@@ -208,19 +315,49 @@ class App(tk.Tk):
         self.searchForData()
         pass
 
+    def progBar(self):
+        self.progress_var = Progressbar(self,orient=HORIZONTAL,length=200,mode='indeterminate')
+        self.progress_var.start()
+        self.progress_var.place(x=500, y=300)
+        pass
+        
     def searchForData(self):
         if self.output_label['text'] != '' and  self.awayoutput_label['text'] != '':
-            progress_var= Progressbar(self,orient=HORIZONTAL,length=200,mode='indeterminate')
-            progress_var.start()
-            progress_var.place(x=500, y=300)
-            homeTeamId = [i for i in self.teams if self.teams[i] == self.hometeam]
-            awayTeamId = [i for i in self.awayteams if self.awayteams[i] == self.awayteam]
-            self.getGames(str(homeTeamId[0]), str(awayTeamId[0]))
-            self.getData(homeTeamId[0], awayTeamId[0])
-            self.createCParam()
-            self.displayHockeyRink()
-            progress_var.destroy()
-            self.clearLists()
+            self.progBar()
+            global finished
+            with lock:
+                finished = False
+            threadobj = {
+                'hometeam': self.hometeam,
+                'teams' : self.teams,
+                'awayteam': self.awayteam,
+                'awayteams' : self.awayteams,
+                'season': self.season,
+                'rdbtngames': self.rdbtngames.get(),
+                'event': Event()
+            }
+            self.threader = Threader(threadobj)
+            self.threader.isDaemon = True
+            self.threader.start()
+            self.homeShoots = self.threader.homeShoots
+            self.homeGoals = self.threader.homeGoals
+            self.awayShoots = self.threader.awayShoots
+            self.awayGoals = self.threader.awayGoals
+            self.homeShotsC = self.threader.homeShotsC
+            self.homeShootsX = self.threader.homeShootsX
+            self.homeShootsY = self.threader.homeShootsY
+            self.homeGoalsC = self.threader.homeGoalsC
+            self.homeGoalsX = self.threader.homeGoalsX
+            self.homeGoalsY = self.threader.homeGoalsY
+            self.awayShootsC = self.threader.awayShootsC
+            self.awayShootsX = self.threader.awayShootsX
+            self.awayShootsY = self.threader.awayShootsY
+            self.awayGoalsC = self.threader.awayGoalsC
+            self.awayGoalsX = self.threader.awayGoalsX
+            self.awayGoalsY = self.threader.awayGoalsY
+
+            self.after(100, self.check_status)  # Start polling.
+
         pass
 
     def displayHockeyRink(self):
@@ -232,7 +369,7 @@ class App(tk.Tk):
         y = np.arange(-52.0, 52.0)
         ax.set_xlim([-105, 105])
         ax.set_ylim([-52, 52])
-        plt.gca().yaxis.set_major_formatter(StrMethodFormatter('{x:,.0f}')) # No decimal places
+        plt.gca().yaxis.set_major_formatter(StrMethodFormatter('{x:,.0f}')) # No decimal places<
         plt.gca().xaxis.set_major_formatter(StrMethodFormatter('{x:,.0f}')) # No decimal places
         extent = np.min(x), np.max(x), np.min(y), np.max(y)
 
@@ -258,112 +395,17 @@ class App(tk.Tk):
         canvas.get_tk_widget().place(x=160, y=5)
         self.displayAwayStats()
         self.displayHomeStats()
-        pass
-
-    def createCParam(self):
-        self.homeShotsC = [1] * len(self.homeShoots) 
-        self.homeGoalsC = [1] * len(self.homeGoals)
-        self.awayShootsC = [1] * len(self.awayShoots) 
-        self.awayGoalsC = [1] * len(self.awayGoals)
-        if len(self.homeGoals) != 0:
-            self.homeGoalsC = [self.homeGoals.count(x) for x in self.homeGoals]
-
-        self.homeShotsC = [self.homeShoots.count(x) for x in self.homeShoots]
-
-        if len(self.awayGoals) != 0:
-            self.awayGoalsC = [self.awayGoals.count(x) for x in self.awayGoals]
-        
-        self.awayShootsC = [self.awayShoots.count(x) for x in self.awayShoots]
-
-        pass
-
-    def getGames(self, homeTeamId, awayTeamId):
-        season = ''
-        if self.season == "2022-2023":
-            season = '20222023'
-        elif self.season == "2021-2022":
-            season = '20212022'
-        elif self.season == "2020-2021":
-            season = '20202021'
-        elif self.season == "2019-2020":  
-            season = '20192020'
-        else:
-            season = '20222023'
-
-        response = requests.get("https://statsapi.web.nhl.com/api/v1/schedule?season=" + season + "&teamId=" + homeTeamId)
-        type(response.text)
-        json_object = json.loads(response.text)
-        value = self.rdbtngames.get() 
-        self.games = [x['games'][0] for x in json_object['dates'] if x['games'][0]['teams']['away']['team']['id'] == int(awayTeamId)
-                    or (x['games'][0]['teams']['away']['team']['id'] == int(homeTeamId)
-                    and x['games'][0]['teams']['home']['team']['id'] == int(awayTeamId)) 
-                    if (x['games'][0]['gameType'] == value or value == 'A')]
-
-        # for x in games:
-        #     if value == 1 and x['games'][0]['gameType'] == 'R':
-        #         self.games.append(x['games'][0])
-        #     elif value == 2 and x['games'][0]['gameType'] == 'P':
-        #         self.games.append(x['games'][0])
-        #     elif value == 3:
-        #         self.games.append(x['games'][0])
-        pass
-
-    def getData(self, homeId, awayId):
-        for x in self.games:
-            response = requests.get("https://statsapi.web.nhl.com/api/v1/game/" + str(x['gamePk']) + "/feed/live")
-            type(response.text)
-            game = json.loads(response.text)
-            homeevents = [x for x in game['liveData']['plays']['allPlays'] if "team" in x 
-                      and x['team']['id'] == homeId
-                      and (x['result']['event'] == 'Shot' or x['result']['event'] == 'Goal' 
-                           or x['result']['event'] == 'Hit' or x['result']['event'] == 'Blocked Shot')]
-            awayevents= [x for x in game['liveData']['plays']['allPlays'] if "team" in x 
-                        and x['team']['id'] == awayId
-                        and (x['result']['event'] == 'Shot' or x['result']['event'] == 'Goal' 
-                           or x['result']['event'] == 'Hit' or x['result']['event'] == 'Blocked Shot')] 
-            
-            for y in awayevents:
-                if y['result']['event'] == 'Shot':
-                    coord = y['coordinates']
-                    coord['x'] = abs(coord['x'])
-                    self.awayShoots.append(coord)
-                    self.awayShootsX.append(coord['x'])
-                    self.awayShootsY.append(coord['y'])
-                elif y['result']['event'] == 'Goal':
-                    coord = y['coordinates']
-                    coord['x'] = abs(coord['x'])
-                    self.awayGoals.append(coord)
-                    self.awayGoalsX.append(coord['x'])
-                    self.awayGoalsY.append(coord['y'])
-                elif  y['result']['event'] == 'Hit':
-                    self.awayHits += 1
-                elif  y['result']['event'] == 'Blocked Shot':
-                    self.awayBlocks += 1
-
-            for y in homeevents:
-                if y['result']['event'] == 'Shot':
-                    coord = y['coordinates']
-                    coord['x'] = -abs(coord['x'])
-                    self.homeShoots.append(coord)
-                    self.homeShootsX.append(coord['x'])
-                    self.homeShootsY.append(coord['y'])
-                elif y['result']['event'] == 'Goal':
-                    coord = y['coordinates']
-                    coord['x'] = -abs(coord['x'])
-                    self.homeGoals.append(coord)
-                    self.homeGoalsX.append(coord['x'])
-                    self.homeGoalsY.append(coord['y'])
-                elif  y['result']['event'] == 'Hit':
-                    self.homeHits += 1
-                elif y['result']['event'] == 'Blocked Shot':
-                    self.homeBlocks += 1
-                    
 
         pass
 
     def displayHomeStats(self):
+
+        self.homeBlocks = self.threader.homeBlocks
+        self.homeHits = self.threader.homeHits
+        
         self.hometeam_label['text'] = f'{self.hometeam}:'
         self.hometeam_label.place(x=965, y=50)
+
         self.homeStatShots_label['text'] = f'Shots: {len(self.homeShoots)}'
         self.homeStatShots_label.place(x=965, y=80)
 
@@ -378,7 +420,9 @@ class App(tk.Tk):
 
         pass
 
-    def displayAwayStats(self):
+    def displayAwayStats(self,):
+        self.awayBlocks = self.threader.awayBlocks
+        self.awayHits = self.threader.awayHits
         self.awayteam_label['text'] = f'{self.awayteam}:'
         self.awayteam_label.place(x=965, y=360)
 
@@ -396,33 +440,34 @@ class App(tk.Tk):
 
         pass
 
-    def clearLists(self):
-        del self.awayGoals[:]
-        del self.awayGoalsX[:]
-        del self.awayGoalsY[:]
-
-        del self.homeGoals[:]
-        del self.homeGoalsX[:]
-        del self.homeGoalsY[:]
-
-        del self.awayShoots[:]
-        del self.awayShootsX[:]
-        del self.awayShootsY[:]
-
-        del self.homeShoots[:]
-        del self.homeShootsX[:]
-        del self.homeShootsY[:]
-
-        del self.games[:]
-        self.awayHits = 0
-        self.awayBlocks = 0
-        self.homeHits = 0
-        self.homeBlocks = 0
+    def check_status(self):
+        with lock:
+            if not finished:
+                self.after(100, self.check_status)  # Keep polling.
+            else:
+                print('end')
+                self.createCParam()
+                self.displayHockeyRink()
 
         pass
+    def createCParam(self):
+        start = time.time()
+        if len(self.homeGoals) != 0:
+            self.homeGoalsC = [self.homeGoals.count(x) for x in self.homeGoals]
 
+        self.homeShotsC = [self.homeShoots.count(x) for x in self.homeShoots]
+
+        if len(self.awayGoals) != 0:
+            self.awayGoalsC = [self.awayGoals.count(x) for x in self.awayGoals]
+        
+        self.awayShootsC = [self.awayShoots.count(x) for x in self.awayShoots]
+
+        end = time.time()
+        print("The time of execution of createCParam is :",
+            (end-start) * 10**3, "ms")
+        
+        pass
 
 if __name__ == '__main__':
-
     app = App()
     app.mainloop()
